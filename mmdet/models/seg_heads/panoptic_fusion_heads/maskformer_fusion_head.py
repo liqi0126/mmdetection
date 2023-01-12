@@ -89,7 +89,7 @@ class MaskFormerFusionHead(BasePanopticFusionHead):
                             pred_class + instance_id * INSTANCE_OFFSET)
                         instance_id += 1
 
-        return panoptic_seg
+        return panoptic_seg, cur_prob_masks
 
     def semantic_postprocess(self, mask_cls, mask_pred):
         """Semantic segmengation postprocess.
@@ -220,11 +220,15 @@ class MaskFormerFusionHead(BasePanopticFusionHead):
                     mode='bilinear',
                     align_corners=False)[:, 0]
 
+
             result = dict()
             if panoptic_on:
-                pan_results = self.panoptic_postprocess(
+                pan_results, prob_masks = self.panoptic_postprocess(
                     mask_cls_result, mask_pred_result)
                 result['pan_results'] = pan_results
+                result['prob_masks'] = prob_masks
+                result['mask_cls_result'] = mask_cls_result
+                result['mask_pred_result'] = mask_pred_result
 
             if instance_on:
                 ins_results = self.instance_postprocess(

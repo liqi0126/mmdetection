@@ -156,8 +156,10 @@ class MaskFormer(SingleStageDetector):
             mask_cls_results, mask_pred_results, img_metas, **kwargs)
         for i in range(len(results)):
             if 'pan_results' in results[i]:
-                results[i]['pan_results'] = results[i]['pan_results'].detach(
-                ).cpu().numpy()
+                results[i]['pan_results'] = results[i]['pan_results'].detach().cpu().numpy()
+                results[i]['prob_masks'] = results[i]['prob_masks'].detach().cpu().numpy()
+                results[i]['mask_cls_result'] = results[i]['mask_cls_result'].detach().cpu().numpy()
+                results[i]['mask_pred_result'] = results[i]['mask_pred_result'].detach().cpu().numpy()
 
             if 'ins_results' in results[i]:
                 labels_per_image, bboxes, mask_pred_binary = results[i][

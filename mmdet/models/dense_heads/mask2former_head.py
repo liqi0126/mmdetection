@@ -41,7 +41,7 @@ class Mask2FormerHead(MaskFormerHead):
             transformer decoder. Defaults to None.
         positional_encoding (:obj:`mmcv.ConfigDict` | dict): Config for
             transformer decoder position encoding. Defaults to None.
-        loss_cls (:obj:`mmcv.ConfigDict` | dict): Config of the classification
+        loss_clip (:obj:`mmcv.ConfigDict` | dict): Config of the classification
             loss. Defaults to None.
         loss_mask (:obj:`mmcv.ConfigDict` | dict): Config of the mask loss.
             Defaults to None.
@@ -61,13 +61,14 @@ class Mask2FormerHead(MaskFormerHead):
                  out_channels,
                  num_things_classes=80,
                  num_stuff_classes=53,
+                 clip_dim=768,
                  num_queries=100,
                  num_transformer_feat_level=3,
                  pixel_decoder=None,
                  enforce_decoder_input_project=False,
                  transformer_decoder=None,
                  positional_encoding=None,
-                 loss_cls=None,
+                 loss_clip=None,
                  loss_mask=None,
                  loss_dice=None,
                  train_cfg=None,
@@ -79,6 +80,7 @@ class Mask2FormerHead(MaskFormerHead):
         self.num_stuff_classes = num_stuff_classes
         self.num_classes = self.num_things_classes + self.num_stuff_classes
         self.num_queries = num_queries
+        self.clip_dim = clip_dim
         self.num_transformer_feat_level = num_transformer_feat_level
         self.num_heads = transformer_decoder.transformerlayers.\
             attn_cfgs.num_heads
@@ -113,7 +115,7 @@ class Mask2FormerHead(MaskFormerHead):
         self.level_embed = nn.Embedding(self.num_transformer_feat_level,
                                         feat_channels)
 
-        self.cls_embed = nn.Linear(feat_channels, self.num_classes + 1)
+        self.clip_embed = nn.Linear(feat_channels, self.clip_dim) if loss_clip is not None else None
         self.mask_embed = nn.Sequential(
             nn.Linear(feat_channels, feat_channels), nn.ReLU(inplace=True),
             nn.Linear(feat_channels, feat_channels), nn.ReLU(inplace=True),
@@ -129,8 +131,7 @@ class Mask2FormerHead(MaskFormerHead):
             self.importance_sample_ratio = self.train_cfg.get(
                 'importance_sample_ratio', 0.75)
 
-        self.class_weight = loss_cls.class_weight
-        self.loss_cls = build_loss(loss_cls)
+        self.loss_clip = build_loss(loss_clip) if loss_clip is not None else None
         self.loss_mask = build_loss(loss_mask)
         self.loss_dice = build_loss(loss_dice)
 
@@ -145,12 +146,12 @@ class Mask2FormerHead(MaskFormerHead):
             if p.dim() > 1:
                 nn.init.xavier_normal_(p)
 
-    def _get_target_single(self, cls_score, mask_pred, gt_labels, gt_masks,
+    def _get_target_single(self, clip_pred, mask_pred, gt_labels, gt_masks,
                            img_metas):
         """Compute classification and mask targets for one image.
 
         Args:
-            cls_score (Tensor): Mask score logits from a single decoder layer
+            clip_pred (Tensor): clip logits from a single decoder layer
                 for one image. Shape (num_queries, cls_out_channels).
             mask_pred (Tensor): Mask logits for a single decoder layer for one
                 image. Shape (num_queries, h, w).
@@ -177,11 +178,11 @@ class Mask2FormerHead(MaskFormerHead):
                     image.
         """
         # sample points
-        num_queries = cls_score.shape[0]
+        num_queries = clip_pred.shape[0]
         num_gts = gt_labels.shape[0]
 
         point_coords = torch.rand((1, self.num_points, 2),
-                                  device=cls_score.device)
+                                  device=clip_pred.device)
         # shape (num_queries, num_points)
         mask_points_pred = point_sample(
             mask_pred.unsqueeze(1), point_coords.repeat(num_queries, 1,
@@ -192,7 +193,7 @@ class Mask2FormerHead(MaskFormerHead):
                                                                1)).squeeze(1)
 
         # assign and sample
-        assign_result = self.assigner.assign(cls_score, mask_points_pred,
+        assign_result = self.assigner.assign(clip_pred, mask_points_pred,
                                              gt_labels, gt_points_masks,
                                              img_metas)
         sampling_result = self.sampler.sample(assign_result, mask_pred,
@@ -215,12 +216,12 @@ class Mask2FormerHead(MaskFormerHead):
         return (labels, label_weights, mask_targets, mask_weights, pos_inds,
                 neg_inds)
 
-    def loss_single(self, cls_scores, mask_preds, gt_labels_list,
+    def loss_single(self, clip_preds, mask_preds, gt_labels_list,
                     gt_masks_list, img_metas):
         """Loss function for outputs from a single decoder layer.
 
         Args:
-            cls_scores (Tensor): Mask score logits from a single decoder layer
+            clip_preds (Tensor): Mask score logits from a single decoder layer
                 for all images. Shape (batch_size, num_queries,
                 cls_out_channels). Note `cls_out_channels` should includes
                 background.
@@ -236,12 +237,12 @@ class Mask2FormerHead(MaskFormerHead):
             tuple[Tensor]: Loss components for outputs from a single \
                 decoder layer.
         """
-        num_imgs = cls_scores.size(0)
-        cls_scores_list = [cls_scores[i] for i in range(num_imgs)]
+        num_imgs = clip_preds.size(0)
+        clip_preds_list = [clip_preds[i] for i in range(num_imgs)]
         mask_preds_list = [mask_preds[i] for i in range(num_imgs)]
         (labels_list, label_weights_list, mask_targets_list, mask_weights_list,
          num_total_pos,
-         num_total_neg) = self.get_targets(cls_scores_list, mask_preds_list,
+         num_total_neg) = self.get_targets(clip_preds_list, mask_preds_list,
                                            gt_labels_list, gt_masks_list,
                                            img_metas)
         # shape (batch_size, num_queries)
@@ -255,18 +256,16 @@ class Mask2FormerHead(MaskFormerHead):
 
         # classfication loss
         # shape (batch_size * num_queries, )
-        cls_scores = cls_scores.flatten(0, 1)
+        clip_preds = clip_preds.flatten(0, 1)
         labels = labels.flatten(0, 1)
         label_weights = label_weights.flatten(0, 1)
 
-        class_weight = cls_scores.new_tensor(self.class_weight)
-        loss_cls = self.loss_cls(
-            cls_scores,
-            labels,
-            label_weights,
-            avg_factor=class_weight[labels].sum())
+        if self.loss_clip is not None:
+            loss_clip = self.loss_clip(clip_preds, labels)
+        else:
+            loss_clip = torch.tensor(0.).to(clip_preds.device)
 
-        num_total_masks = reduce_mean(cls_scores.new_tensor([num_total_pos]))
+        num_total_masks = reduce_mean(clip_preds.new_tensor([num_total_pos]))
         num_total_masks = max(num_total_masks, 1)
 
         # extract positive ones
@@ -277,7 +276,7 @@ class Mask2FormerHead(MaskFormerHead):
             # zero match
             loss_dice = mask_preds.sum()
             loss_mask = mask_preds.sum()
-            return loss_cls, loss_mask, loss_dice
+            return loss_clip, loss_mask, loss_dice
 
         with torch.no_grad():
             points_coords = get_uncertain_point_coords_with_randomness(
@@ -304,7 +303,7 @@ class Mask2FormerHead(MaskFormerHead):
             mask_point_targets,
             avg_factor=num_total_masks * self.num_points)
 
-        return loss_cls, loss_mask, loss_dice
+        return loss_clip, loss_mask, loss_dice
 
     def forward_head(self, decoder_out, mask_feature, attn_mask_target_size):
         """Forward for head part which is called after every decoder layer.
@@ -318,9 +317,9 @@ class Mask2FormerHead(MaskFormerHead):
         Returns:
             tuple: A tuple contain three elements.
 
-            - cls_pred (Tensor): Classification scores in shape \
-                (batch_size, num_queries, cls_out_channels). \
-                Note `cls_out_channels` should includes background.
+            - clip_pred (Tensor): Classification scores in shape \
+                (batch_size, num_queries, clip_out_channels). \
+                Note `clip_out_channels` should includes background.
             - mask_pred (Tensor): Mask scores in shape \
                 (batch_size, num_queries,h, w).
             - attn_mask (Tensor): Attention mask in shape \
@@ -329,7 +328,11 @@ class Mask2FormerHead(MaskFormerHead):
         decoder_out = self.transformer_decoder.post_norm(decoder_out)
         decoder_out = decoder_out.transpose(0, 1)
         # shape (batch_size, num_queries, c)
-        cls_pred = self.cls_embed(decoder_out)
+
+        if self.loss_clip is not None:
+            clip_pred = self.clip_embed(decoder_out)
+        else:
+            clip_pred = torch.zeros((*decoder_out.shape[:-1], self.clip_dim), device=decoder_out.device)
         # shape (batch_size, num_queries, c)
         mask_embed = self.mask_embed(decoder_out)
         # shape (batch_size, num_queries, h, w)
@@ -346,7 +349,7 @@ class Mask2FormerHead(MaskFormerHead):
         attn_mask = attn_mask.sigmoid() < 0.5
         attn_mask = attn_mask.detach()
 
-        return cls_pred, mask_pred, attn_mask
+        return clip_pred, mask_pred, attn_mask
 
     def forward(self, feats, img_metas):
         """Forward function.
@@ -359,10 +362,10 @@ class Mask2FormerHead(MaskFormerHead):
         Returns:
             tuple: A tuple contains two elements.
 
-            - cls_pred_list (list[Tensor)]: Classification logits \
+            - clip_pred_list (list[Tensor)]: Classification logits \
                 for each decoder layer. Each is a 3D-tensor with shape \
-                (batch_size, num_queries, cls_out_channels). \
-                Note `cls_out_channels` should includes background.
+                (batch_size, num_queries, clip_out_channels). \
+                Note `clip_out_channels` should includes background.
             - mask_pred_list (list[Tensor]): Mask logits for each \
                 decoder layer. Each with shape (batch_size, num_queries, \
                  h, w).
@@ -394,11 +397,11 @@ class Mask2FormerHead(MaskFormerHead):
         query_embed = self.query_embed.weight.unsqueeze(1).repeat(
             (1, batch_size, 1))
 
-        cls_pred_list = []
+        clip_pred_list = []
         mask_pred_list = []
-        cls_pred, mask_pred, attn_mask = self.forward_head(
+        clip_pred, mask_pred, attn_mask = self.forward_head(
             query_feat, mask_features, multi_scale_memorys[0].shape[-2:])
-        cls_pred_list.append(cls_pred)
+        clip_pred_list.append(clip_pred)
         mask_pred_list.append(mask_pred)
 
         for i in range(self.num_transformer_decoder_layers):
@@ -420,11 +423,12 @@ class Mask2FormerHead(MaskFormerHead):
                 query_key_padding_mask=None,
                 # here we do not apply masking on padded region
                 key_padding_mask=None)
-            cls_pred, mask_pred, attn_mask = self.forward_head(
+            clip_pred, mask_pred, attn_mask = self.forward_head(
                 query_feat, mask_features, multi_scale_memorys[
                     (i + 1) % self.num_transformer_feat_level].shape[-2:])
 
-            cls_pred_list.append(cls_pred)
+            clip_pred_list.append(clip_pred)
             mask_pred_list.append(mask_pred)
 
-        return cls_pred_list, mask_pred_list
+        # return mask_pred_list
+        return clip_pred_list, mask_pred_list

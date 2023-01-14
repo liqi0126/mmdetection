@@ -281,6 +281,7 @@ class CocoPanopticDataset(CocoDataset):
             file_client_args=file_client_args)
         self.ins_ann_file = ins_ann_file
 
+
     def load_annotations(self, ann_file):
         """Load annotation from COCO Panoptic style annotation file.
 
@@ -357,6 +358,8 @@ class CocoPanopticDataset(CocoDataset):
             mask_info = {
                 'id': ann['id'],
                 'category': contiguous_cat_id,
+                'clip_feat': np.array(ann['clip_feat'], dtype=np.float32),
+                # 'clip_feat': np.ones(768, dtype=np.float32),
                 'is_thing': is_thing
             }
             gt_mask_infos.append(mask_info)

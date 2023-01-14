@@ -1,5 +1,8 @@
 # Copyright (c) OpenMMLab. All rights reserved.
 import copy
+import clip
+
+import numpy as np
 
 import torch
 import torch.nn as nn
@@ -132,8 +135,14 @@ class Mask2FormerHead(MaskFormerHead):
                 'importance_sample_ratio', 0.75)
 
         self.loss_clip = build_loss(loss_clip) if loss_clip is not None else None
-        self.loss_mask = build_loss(loss_mask)
-        self.loss_dice = build_loss(loss_dice)
+        self.loss_mask = build_loss(loss_mask) if loss_mask is not None else None
+        self.loss_dice = build_loss(loss_dice) if loss_dice is not None else None
+
+        with open('/data/coco/annotations/coco_panoptic_clip.npy', 'rb') as f:
+            self.text_clip_feats = np.load(f)
+
+        self.text_clip_feats = torch.tensor(self.text_clip_feats, dtype=torch.float32)
+
 
     def init_weights(self):
         for m in self.decoder_input_projs:
@@ -202,11 +211,10 @@ class Mask2FormerHead(MaskFormerHead):
         neg_inds = sampling_result.neg_inds
 
         # label target
-        labels = gt_labels.new_full((self.num_queries, ),
-                                    self.num_classes,
-                                    dtype=torch.long)
+        labels = gt_labels.new_full((self.num_queries, *gt_labels.shape[1:]), 0)
         labels[pos_inds] = gt_labels[sampling_result.pos_assigned_gt_inds]
-        label_weights = gt_labels.new_ones((self.num_queries, ))
+        label_weights = gt_labels.new_full((self.num_queries, ), 0.1)
+        label_weights[pos_inds] = 1.0
 
         # mask target
         mask_targets = gt_masks[sampling_result.pos_assigned_gt_inds]
@@ -259,9 +267,10 @@ class Mask2FormerHead(MaskFormerHead):
         clip_preds = clip_preds.flatten(0, 1)
         labels = labels.flatten(0, 1)
         label_weights = label_weights.flatten(0, 1)
+        labels[label_weights < 1] = self.text_clip_feats[0].to(clip_preds.device)
 
         if self.loss_clip is not None:
-            loss_clip = self.loss_clip(clip_preds, labels)
+            loss_clip = (label_weights * self.loss_clip(clip_preds, labels).mean(-1)).sum() / label_weights.sum()
         else:
             loss_clip = torch.tensor(0.).to(clip_preds.device)
 
@@ -274,8 +283,8 @@ class Mask2FormerHead(MaskFormerHead):
 
         if mask_targets.shape[0] == 0:
             # zero match
-            loss_dice = mask_preds.sum()
-            loss_mask = mask_preds.sum()
+            loss_dice = mask_preds.sum() if self.loss_dice is not None else torch.tensor(0.).to(clip_preds.device)
+            loss_mask = mask_preds.sum() if self.loss_mask is not None else torch.tensor(0.).to(clip_preds.device)
             return loss_clip, loss_mask, loss_dice
 
         with torch.no_grad():
@@ -290,18 +299,24 @@ class Mask2FormerHead(MaskFormerHead):
             mask_preds.unsqueeze(1), points_coords).squeeze(1)
 
         # dice loss
-        loss_dice = self.loss_dice(
-            mask_point_preds, mask_point_targets, avg_factor=num_total_masks)
+        if self.loss_dice is not None:
+            loss_dice = self.loss_dice(
+                mask_point_preds, mask_point_targets, avg_factor=num_total_masks)
+        else:
+            loss_dice = torch.tensor(0.).to(clip_preds.device)
 
-        # mask loss
-        # shape (num_queries, num_points) -> (num_queries * num_points, )
-        mask_point_preds = mask_point_preds.reshape(-1)
-        # shape (num_total_gts, num_points) -> (num_total_gts * num_points, )
-        mask_point_targets = mask_point_targets.reshape(-1)
-        loss_mask = self.loss_mask(
-            mask_point_preds,
-            mask_point_targets,
-            avg_factor=num_total_masks * self.num_points)
+        if self.loss_mask is not None:
+            # mask loss
+            # shape (num_queries, num_points) -> (num_queries * num_points, )
+            mask_point_preds = mask_point_preds.reshape(-1)
+            # shape (num_total_gts, num_points) -> (num_total_gts * num_points, )
+            mask_point_targets = mask_point_targets.reshape(-1)
+            loss_mask = self.loss_mask(
+                mask_point_preds,
+                mask_point_targets,
+                avg_factor=num_total_masks * self.num_points)
+        else:
+            loss_mask = torch.tensor(0.).to(clip_preds.device)
 
         return loss_clip, loss_mask, loss_dice
 

@@ -8,7 +8,7 @@ from mmcv.cnn.bricks.transformer import (build_positional_encoding,
 from mmcv.runner import force_fp32
 
 from mmdet.core import build_assigner, build_sampler, multi_apply, reduce_mean
-from mmdet.models.utils import preprocess_panoptic_gt
+from mmdet.models.utils import preprocess_panoptic_gt, preprocess_panoptic_mask
 from ..builder import HEADS, build_loss
 from .anchor_free_head import AnchorFreeHead
 
@@ -168,8 +168,16 @@ class MaskFormerHead(AnchorFreeHead):
         targets = multi_apply(preprocess_panoptic_gt, gt_labels_list,
                               gt_masks_list, gt_semantic_segs, num_things_list,
                               num_stuff_list, img_metas)
+
         labels, masks = targets
         return labels, masks
+
+    def preprocess_gt_mask(self, gt_labels_list, gt_masks_list, img_metas):
+        targets = multi_apply(preprocess_panoptic_mask, gt_labels_list, gt_masks_list, img_metas)
+
+        labels, masks = targets
+        return labels, masks
+
 
     def get_targets(self, cls_scores_list, mask_preds_list, gt_labels_list,
                     gt_masks_list, img_metas):
@@ -493,19 +501,7 @@ class MaskFormerHead(AnchorFreeHead):
             img_metas (list[Dict]): List of image information.
             gt_bboxes (list[Tensor]): Each element is ground truth bboxes of
                 the image, shape (num_gts, 4). Not used here.
-            gt_labels (list[Tensor]): Each element is ground truth labels of
-                each box, shape (num_gts,).
-            gt_masks (list[BitmapMasks]): Each element is masks of instances
-                of a image, shape (num_gts, h, w).
-            gt_semantic_seg (list[tensor] | None): Each element is the ground
-                truth of semantic segmentation with the shape (N, H, W).
-                [0, num_thing_class - 1] means things,
-                [num_thing_class, num_class-1] means stuff,
-                255 means VOID. It's None when training instance segmentation.
-            gt_bboxes_ignore (list[Tensor]): Ground truth bboxes to be
-                ignored. Defaults to None.
-
-        Returns:
+            Returns:
             dict[str, Tensor]: a dictionary of loss components
         """
         # not consider ignoring bboxes
@@ -515,12 +511,10 @@ class MaskFormerHead(AnchorFreeHead):
         all_cls_scores, all_mask_preds = self(feats, img_metas)
 
         # preprocess ground truth
-        gt_labels, gt_masks = self.preprocess_gt(gt_labels, gt_masks,
-                                                 gt_semantic_seg, img_metas)
+        gt_labels, gt_masks = self.preprocess_gt_mask(gt_labels, gt_masks, img_metas)
 
         # loss
-        losses = self.loss(all_cls_scores, all_mask_preds, gt_labels, gt_masks,
-                           img_metas)
+        losses = self.loss(all_cls_scores, all_mask_preds, gt_labels, gt_masks, img_metas)
 
         return losses
 

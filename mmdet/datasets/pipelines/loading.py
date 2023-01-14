@@ -287,6 +287,7 @@ class LoadAnnotations:
         results['gt_labels'] = results['ann_info']['labels'].copy()
         return results
 
+
     def _poly2mask(self, mask_ann, img_h, img_w):
         """Private function to convert masks represented with polygon to
         bitmaps.
@@ -434,6 +435,7 @@ class LoadPanopticAnnotations(LoadAnnotations):
                  with_label=True,
                  with_mask=True,
                  with_seg=True,
+                 label_key='category',
                  file_client_args=dict(backend='disk')):
         if rgb2id is None:
             raise RuntimeError(
@@ -449,6 +451,9 @@ class LoadPanopticAnnotations(LoadAnnotations):
             poly2mask=True,
             denorm_bbox=False,
             file_client_args=file_client_args)
+
+        self.label_key = label_key
+
 
     def _load_masks_and_semantic_segs(self, results):
         """Private function to load mask and semantic segmentation annotations.
@@ -495,6 +500,58 @@ class LoadPanopticAnnotations(LoadAnnotations):
         if self.with_seg:
             results['gt_semantic_seg'] = gt_seg
             results['seg_fields'].append('gt_semantic_seg')
+
+        return results
+
+
+    def _load_all(self, results):
+        """Private function to load mask and semantic segmentation annotations.
+
+        In gt_semantic_seg, the foreground label is from `0` to
+        `num_things - 1`, the background label is from `num_things` to
+        `num_things + num_stuff - 1`, 255 means the ignored label (`VOID`).
+
+        Args:
+            results (dict): Result dict from :obj:`mmdet.CustomDataset`.
+
+        Returns:
+            dict: The dict contains loaded mask and semantic segmentation
+                annotations. `BitmapMasks` is used for mask annotations.
+        """
+
+        if self.file_client is None:
+            self.file_client = mmcv.FileClient(**self.file_client_args)
+
+        filename = osp.join(results['seg_prefix'],
+                            results['ann_info']['seg_map'])
+        img_bytes = self.file_client.get(filename)
+        pan_png = mmcv.imfrombytes(
+            img_bytes, flag='color', channel_order='rgb').squeeze()
+        pan_png = rgb2id(pan_png)
+
+        gt_labels = []
+        gt_masks = []
+        gt_seg = np.zeros_like(pan_png) + 255  # 255 as ignore
+
+        for mask_info in results['ann_info']['masks']:
+            mask = (pan_png == mask_info['id'])
+            gt_seg = np.where(mask, mask_info['category'], gt_seg)
+            gt_labels.append(mask_info[self.label_key])
+            gt_masks.append(mask.astype(np.uint8))
+
+        if self.with_label:
+            results['gt_labels'] = np.array(gt_labels)
+
+        if self.with_mask:
+            h, w = results['img_info']['height'], results['img_info']['width']
+            gt_masks = BitmapMasks(gt_masks, h, w)
+            results['gt_masks'] = gt_masks
+            results['mask_fields'].append('gt_masks')
+
+        if self.with_seg:
+            results['gt_semantic_seg'] = gt_seg
+            results['seg_fields'].append('gt_semantic_seg')
+
         return results
 
     def __call__(self, results):
@@ -512,12 +569,10 @@ class LoadPanopticAnnotations(LoadAnnotations):
             results = self._load_bboxes(results)
             if results is None:
                 return None
-        if self.with_label:
-            results = self._load_labels(results)
-        if self.with_mask or self.with_seg:
-            # The tasks completed by '_load_masks' and '_load_semantic_segs'
-            # in LoadAnnotations are merged to one function.
-            results = self._load_masks_and_semantic_segs(results)
+        # if self.with_label:
+        #     results = self._load_labels(results)
+        if self.with_label or self.with_mask or self.with_seg:
+            results = self._load_all(results)
 
         return results
 

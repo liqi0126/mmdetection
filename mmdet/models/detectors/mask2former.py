@@ -15,6 +15,7 @@ class Mask2Former(MaskFormer):
                  panoptic_head=None,
                  panoptic_fusion_head=None,
                  train_cfg=None,
+                 clip_only=False,
                  test_cfg=None,
                  init_cfg=None):
         super().__init__(
@@ -25,3 +26,8 @@ class Mask2Former(MaskFormer):
             train_cfg=train_cfg,
             test_cfg=test_cfg,
             init_cfg=init_cfg)
+
+        if clip_only:
+            for name, param in self.named_parameters():
+                if 'clip_embed' not in name:
+                    param.requires_grad = False

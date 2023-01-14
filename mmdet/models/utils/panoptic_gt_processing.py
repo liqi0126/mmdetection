@@ -66,3 +66,12 @@ def preprocess_panoptic_gt(gt_labels, gt_masks, gt_semantic_seg, num_things,
 
     masks = masks.long()
     return labels, masks
+
+
+def preprocess_panoptic_mask(gt_labels, gt_masks, img_metas):
+
+    masks = gt_masks.pad(img_metas['pad_shape'][:2], pad_val=0)\
+        .to_tensor(dtype=torch.bool, device=gt_labels.device)
+
+    masks = masks.long()
+    return gt_labels, masks

@@ -74,9 +74,9 @@ class MaskHungarianAssigner(BaseAssigner):
         assigned_gt_inds = mask_pred.new_full((num_query, ),
                                               -1,
                                               dtype=torch.long)
-        assigned_labels = mask_pred.new_full((num_query, ),
-                                             -1,
-                                             dtype=torch.long)
+        assigned_labels = mask_pred.new_full((num_query, *gt_labels.shape[1:]),
+                                             -1, dtype=gt_labels.dtype)
+
         if num_gt == 0 or num_query == 0:
             # No ground truth or boxes, return empty assignment
             if num_gt == 0:

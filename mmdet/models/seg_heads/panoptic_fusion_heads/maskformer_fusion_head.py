@@ -1,4 +1,7 @@
 # Copyright (c) OpenMMLab. All rights reserved.
+
+import numpy as np
+
 import torch
 import torch.nn.functional as F
 
@@ -6,6 +9,15 @@ from mmdet.core.evaluation.panoptic_utils import INSTANCE_OFFSET
 from mmdet.core.mask import mask2bbox
 from mmdet.models.builder import HEADS
 from .base_panoptic_fusion_head import BasePanopticFusionHead
+
+
+def get_logits(img_features, text_features):
+    img_features = img_features / img_features.norm(dim=-1, keepdim=True)
+    text_features = text_features / text_features.norm(dim=-1, keepdim=True)
+
+    logits_per_image = img_features @ text_features.float().t()
+
+    return logits_per_image
 
 
 @HEADS.register_module()
@@ -20,6 +32,11 @@ class MaskFormerFusionHead(BasePanopticFusionHead):
                  **kwargs):
         super().__init__(num_things_classes, num_stuff_classes, test_cfg,
                          loss_panoptic, init_cfg, **kwargs)
+
+        with open('/data/coco/annotations/coco_panoptic_clip.npy', 'rb') as f:
+            self.text_clip_feats = np.load(f)
+
+        self.text_clip_feats = torch.tensor(self.text_clip_feats, dtype=torch.float32)
 
     def forward_train(self, **kwargs):
         """MaskFormerFusionHead has no training loss."""
@@ -41,6 +58,7 @@ class MaskFormerFusionHead(BasePanopticFusionHead):
                 (h, w), each element in Tensor means: \
                 ``segment_id = _cls + instance_id * INSTANCE_OFFSET``.
         """
+
         object_mask_thr = self.test_cfg.get('object_mask_thr', 0.8)
         iou_thr = self.test_cfg.get('iou_thr', 0.8)
         filter_low_score = self.test_cfg.get('filter_low_score', False)
@@ -60,6 +78,7 @@ class MaskFormerFusionHead(BasePanopticFusionHead):
                                   self.num_classes,
                                   dtype=torch.int32,
                                   device=cur_masks.device)
+
         if cur_masks.shape[0] == 0:
             # We didn't detect any mask :(
             pass
@@ -207,6 +226,9 @@ class MaskFormerFusionHead(BasePanopticFusionHead):
         results = []
         for mask_cls_result, mask_pred_result, meta in zip(
                 mask_cls_results, mask_pred_results, img_metas):
+
+            mask_cls_result = get_logits(mask_cls_result, self.text_clip_feats.to(mask_cls_result.device))
+
             # remove padding
             img_height, img_width = meta['img_shape'][:2]
             mask_pred_result = mask_pred_result[:, :img_height, :img_width]

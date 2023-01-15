@@ -267,7 +267,7 @@ class Mask2FormerHead(MaskFormerHead):
         clip_preds = clip_preds.flatten(0, 1)
         labels = labels.flatten(0, 1)
         label_weights = label_weights.flatten(0, 1)
-        labels[label_weights < 1] = self.text_clip_feats[0].to(clip_preds.device)
+        labels[label_weights < 1] = self.text_clip_feats[-1].to(clip_preds.device)
 
         if self.loss_clip is not None:
             loss_clip = (label_weights * self.loss_clip(clip_preds, labels).mean(-1)).sum() / label_weights.sum()

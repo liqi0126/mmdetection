@@ -10,7 +10,7 @@ import torch
 
 
 def main(base_dir='/data/coco/annotations'):
-    CLASSES = ['nothing'] + [
+    CLASSES = [
         'person', 'bicycle', 'car', 'motorcycle', 'airplane', 'bus', 'train',
         ' truck', 'boat', 'traffic light', 'fire hydrant', 'stop sign',
         'parking meter', 'bench', 'bird', 'cat', 'dog', 'horse', 'sheep',
@@ -35,7 +35,7 @@ def main(base_dir='/data/coco/annotations'):
         'pavement-merged', 'mountain-merged', 'grass-merged', 'dirt-merged',
         'paper-merged', 'food-other-merged', 'building-other-merged',
         'rock-merged', 'wall-other-merged', 'rug-merged'
-    ]
+    ] + ['nothing']
 
     device = "cuda" if torch.cuda.is_available() else "cpu"
     model, preprocess = clip.load("ViT-L/14@336px", device=device)

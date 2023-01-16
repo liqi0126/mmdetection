@@ -1,8 +1,8 @@
 # -*- coding: utf-8 -*-
 
-
 import os
 import numpy as np
+from copy import deepcopy
 import glob
 
 from PIL import Image
@@ -12,26 +12,17 @@ from fire import Fire
 import cv2
 
 from mmdet.apis import init_detector, inference_detector
+from imgviz import label_colormap
 
 import torch
-from mmcv.ops import RoIPool
 from mmcv.parallel import collate, scatter
-from imgviz import label_colormap
-from mmdet.core import get_classes
 
-from mmdet.datasets import replace_ImageToTensor
-from mmdet.datasets.pipelines import Compose
-
-from palette import COCO_STUFF_PALETTE
 
 INSTANCE_OFFSET = 1000
 
 config_file = 'configs/mask2former/mask2former_swin-l-p4-w12-384-in21k_lsj_16x1_100e_coco-panoptic_clip_only.py'
 checkpoint_file = 'work_dirs/mask2former_swin-l-p4-w12-384-in21k_lsj_16x1_100e_coco-panoptic_clip_only/latest.pth'
 # checkpoint_file = 'checkpoints/mask2former_swin-l-p4-w12-384-in21k_lsj_16x1_100e_coco-panoptic_20220407_104949-d4919c44.pth'
-
-import torch
-import torch.nn.functional as F
 
 def main(from_folder='/data/Replica_Dataset/room_0/Sequence_1/rgb',
          to_folder='tmp',
@@ -41,45 +32,39 @@ def main(from_folder='/data/Replica_Dataset/room_0/Sequence_1/rgb',
 
     model = init_detector(config_file, checkpoint_file, device='cuda:0')
 
-    # for n, p in model.named_parameters():
-    #     if 'out_proj' in n:
-    #         print(n)
-    #         print(p.mean())
+    # kernel = np.ones((7, 7))
 
-    # import ipdb; ipdb.set_trace()
-
-    palette = np.array(COCO_STUFF_PALETTE)
-
-    inst_palette = label_colormap(50)
+    palette = label_colormap(1000)
 
     os.makedirs(to_folder, exist_ok=True)
 
     videos = glob.glob(f"{from_folder}/rgb_*.png")
     for i, frame in enumerate(videos):
+
+        img = cv2.imread(frame)
+
         idx = int(frame.split('/')[-1][4:-4])
-        print(f"process frame {idx}")
 
         result = inference_detector(model, frame)
-        panoptic = result['pan_results']
+        mask = result['mask_results'].cpu().numpy()
 
-        sem_seg = panoptic % INSTANCE_OFFSET + 1
-        sem_seg[sem_seg == 134] = 0  # void
-        ins_seg = panoptic // INSTANCE_OFFSET
+        for c in np.unique(mask):
+            img_copy = deepcopy(img)
+            m = mask == c
+            # m = cv2.filter2D(m.astype(float), ddepth=-1, kernel=kernel) > 0
 
-        sem_seg = sem_seg.astype('uint8')
-        ins_seg = ins_seg.astype('uint8')
+            img_copy[~m] = 0
+            cv2.imwrite(f'{to_folder}/mask_{idx}_class_{c}.png', img_copy)
 
-        ins_viz = inst_palette[ins_seg]
+        cv2.imwrite(f'{to_folder}/mask_{idx}.png', palette[mask])
 
-        sem_viz = np.zeros((*sem_seg.shape, 3), dtype='uint8')
+        # for i in range():
+        #     cv2.imwrite(f'{to_folder}/semantic_class_{idx}.png', sem_seg)
 
-        sem_viz[sem_seg > 0] = palette[sem_seg[sem_seg > 0] - 1]
-
-        cv2.imwrite(f'{to_folder}/semantic_class_{idx}.png', sem_seg)
-        cv2.imwrite(f'{to_folder}/semantic_instance_{idx}.png', ins_seg)
-        cv2.imwrite(f'{to_folder}/semantic_viz_{idx}.png', sem_viz)
-        cv2.imwrite(f'{to_folder}/instance_viz_{idx}.png', ins_viz)
         model.show_result(frame, result, out_file=f'{to_folder}/pano_{idx}.jpg')
+
+        print(f"process frame {idx} done")
 
 if __name__ == '__main__':
     Fire(main)
+

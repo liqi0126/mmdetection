@@ -42,6 +42,46 @@ class MaskFormerFusionHead(BasePanopticFusionHead):
         """MaskFormerFusionHead has no training loss."""
         return dict()
 
+
+    def mask_postprocess(self, mask_cls, mask_pred):
+        iou_thr = self.test_cfg.get('iou_thr', 0.8)
+        filter_low_score = self.test_cfg.get('filter_low_score', False)
+
+        scores, labels = F.softmax(mask_cls, dim=-1).max(-1)
+        mask_pred = mask_pred.sigmoid()
+
+        keep = labels.ne(self.num_classes)
+        cur_prob_masks = mask_pred[keep]
+
+        h, w = cur_prob_masks.shape[-2:]
+        mask_seg = torch.full((h, w),
+                              0,
+                              dtype=torch.int32,
+                              device=cur_prob_masks.device)
+
+        if cur_prob_masks.shape[0] == 0:
+            # We didn't detect any mask :(
+            pass
+        else:
+            cur_mask_ids = cur_prob_masks.argmax(0)
+            instance_id = 1
+            for k in range(cur_prob_masks.shape[0]):
+                mask = cur_mask_ids == k
+                mask_area = mask.sum().item()
+                original_area = (cur_prob_masks[k] >= 0.5).sum().item()
+
+                if filter_low_score:
+                    mask = mask & (cur_prob_masks[k] >= 0.5)
+
+                if mask_area > 0 and original_area > 0:
+                    if mask_area / original_area < iou_thr:
+                        continue
+
+                    mask_seg[mask] = instance_id
+                    instance_id += 1
+
+        return mask_seg
+
     def panoptic_postprocess(self, mask_cls, mask_pred):
         """Panoptic segmengation inference.
 
@@ -217,6 +257,7 @@ class MaskFormerFusionHead(BasePanopticFusionHead):
                     ...
                 ]
         """
+        mask_on = self.test_cfg.get('mask_on', True)
         panoptic_on = self.test_cfg.get('panoptic_on', True)
         semantic_on = self.test_cfg.get('semantic_on', False)
         instance_on = self.test_cfg.get('instance_on', False)
@@ -243,6 +284,11 @@ class MaskFormerFusionHead(BasePanopticFusionHead):
                     align_corners=False)[:, 0]
 
             result = dict()
+            if mask_on:
+                mask_results = self.mask_postprocess(
+                    mask_cls_result, mask_pred_result)
+                result['mask_results'] = mask_results
+
             if panoptic_on:
                 pan_results = self.panoptic_postprocess(
                     mask_cls_result, mask_pred_result)

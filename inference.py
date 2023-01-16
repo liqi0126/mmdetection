@@ -48,8 +48,6 @@ def main(from_folder='/data/Replica_Dataset/room_0/Sequence_1/rgb',
 
     # import ipdb; ipdb.set_trace()
 
-    model.CLASSES = get_classes('coco')
-
     palette = np.array(COCO_STUFF_PALETTE)
 
     inst_palette = label_colormap(50)

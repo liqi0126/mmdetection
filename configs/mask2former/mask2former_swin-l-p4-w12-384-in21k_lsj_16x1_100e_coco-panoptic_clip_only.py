@@ -14,6 +14,9 @@ model = dict(
         loss_mask=None,
         loss_dice=None,
     ),
+    test_cfg=dict(
+        object_mask_thr = 0.8
+    )
 )
 
 image_size = (1024, 1024)

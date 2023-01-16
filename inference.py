@@ -28,6 +28,7 @@ INSTANCE_OFFSET = 1000
 
 config_file = 'configs/mask2former/mask2former_swin-l-p4-w12-384-in21k_lsj_16x1_100e_coco-panoptic_clip_only.py'
 checkpoint_file = 'work_dirs/mask2former_swin-l-p4-w12-384-in21k_lsj_16x1_100e_coco-panoptic_clip_only/latest.pth'
+# checkpoint_file = 'checkpoints/mask2former_swin-l-p4-w12-384-in21k_lsj_16x1_100e_coco-panoptic_20220407_104949-d4919c44.pth'
 
 import torch
 import torch.nn.functional as F
@@ -39,6 +40,13 @@ def main(from_folder='/data/Replica_Dataset/room_0/Sequence_1/rgb',
          use_conf=False):
 
     model = init_detector(config_file, checkpoint_file, device='cuda:0')
+
+    # for n, p in model.named_parameters():
+    #     if 'out_proj' in n:
+    #         print(n)
+    #         print(p.mean())
+
+    # import ipdb; ipdb.set_trace()
 
     model.CLASSES = get_classes('coco')
 

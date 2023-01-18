@@ -271,6 +271,7 @@ class Mask2FormerHead(MaskFormerHead):
 
         if self.loss_clip is not None:
             loss_clip = (label_weights * self.loss_clip(clip_preds, labels).mean(-1)).sum() / label_weights.sum()
+            #  loss_clip = self.loss_clip(clip_preds, labels).mean()
         else:
             loss_clip = torch.tensor(0.).to(clip_preds.device)
 
@@ -348,10 +349,12 @@ class Mask2FormerHead(MaskFormerHead):
             clip_pred = self.clip_embed(decoder_out)
         else:
             clip_pred = torch.zeros((*decoder_out.shape[:-1], self.clip_dim), device=decoder_out.device)
+
         # shape (batch_size, num_queries, c)
         mask_embed = self.mask_embed(decoder_out)
         # shape (batch_size, num_queries, h, w)
         mask_pred = torch.einsum('bqc,bchw->bqhw', mask_embed, mask_feature)
+
         attn_mask = F.interpolate(
             mask_pred,
             attn_mask_target_size,

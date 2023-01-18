@@ -16,6 +16,8 @@ def main(base_dir='/data/coco',
     with open(ann_in_file, 'r') as f:
         ann_json = json.load(f)
 
+    import ipdb; ipdb.set_trace()
+
     device = "cuda" if torch.cuda.is_available() else "cpu"
     model, preprocess = clip.load("ViT-L/14@336px", device=device)
 

@@ -42,7 +42,6 @@ class MaskFormerFusionHead(BasePanopticFusionHead):
         """MaskFormerFusionHead has no training loss."""
         return dict()
 
-
     def mask_postprocess(self, mask_cls, mask_pred):
         iou_thr = self.test_cfg.get('iou_thr', 0.8)
         filter_low_score = self.test_cfg.get('filter_low_score', False)
@@ -106,7 +105,8 @@ class MaskFormerFusionHead(BasePanopticFusionHead):
         scores, labels = F.softmax(mask_cls, dim=-1).max(-1)
         mask_pred = mask_pred.sigmoid()
 
-        keep = labels.ne(self.num_classes) & (scores > object_mask_thr)
+        # keep = labels.ne(self.num_classes) & (scores > object_mask_thr)
+        keep = labels.ne(self.num_classes)
         cur_scores = scores[keep]
         cur_classes = labels[keep]
         cur_masks = mask_pred[keep]

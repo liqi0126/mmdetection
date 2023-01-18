@@ -833,6 +833,7 @@ class RandomCrop:
             results[key] = bboxes[valid_inds, :]
             # label fields. e.g. gt_labels and gt_labels_ignore
             label_key = self.bbox2label.get(key)
+
             if label_key in results:
                 results[label_key] = results[label_key][valid_inds]
 

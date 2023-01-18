@@ -346,14 +346,8 @@ class CocoPanopticDataset(CocoDataset):
             contiguous_cat_id = self.cat2label[category_id]
 
             is_thing = self.coco.load_cats(ids=category_id)[0]['isthing']
-            if is_thing:
-                is_crowd = ann.get('iscrowd', False)
-                if not is_crowd:
-                    gt_bboxes.append(bbox)
-                    gt_labels.append(contiguous_cat_id)
-                else:
-                    gt_bboxes_ignore.append(bbox)
-                    is_thing = False
+            gt_bboxes.append(bbox)
+            gt_labels.append(contiguous_cat_id)
 
             mask_info = {
                 'id': ann['id'],
